@@ -3,92 +3,71 @@ unit KLib.Promise;
 interface
 
 uses
-  Vcl.Controls, VCL.Forms,
-  Winapi.Windows, Winapi.Messages,
-  System.SysUtils, System.Classes,
-  ActiveX,
-
   KLib.Types;
 
-const
-  WM_PROMISE_EXECUTE = WM_USER + 102;
-
 type
-  TResolve = reference to procedure(msg: String);
-  TReject = reference to procedure(msg: String);
-  TPromiseFull = reference to procedure(resolve: TResolve; reject: TResolve);
 
-  TPromiseResolve = reference to procedure(resolve: TResolve);
-  TPromiseReject = reference to procedure(reject: TReject);
-
-  TPromise = class
-  private
-    _mainProcedureFull: TPromiseFull;
-    _mainProcedureOnlyResolve: TPromiseResolve;
-    _mainProcedureOnlyReject: TPromiseReject;
-    thenProcedure: TResolve;
-    catchProcedure: TReject;
-    alreadyExecuted: boolean;
-    enabledExecute: boolean;
-    enabledThen: boolean;
-    enabledCatch: boolean;
-    procedure execute;
-    procedure executeInAnonymousThread;
-    procedure mainProcedure;
-    procedure resolve(msg: string);
-    procedure reject(msg: string);
-  public
-    procedure _then(value: TResolve);
-    procedure _catch(value: TReject);
-    constructor Create(mainProcedureOnlyResolve: TPromiseResolve); reintroduce; overload;
-    constructor Create(mainProcedureOnlyReject: TPromiseReject); reintroduce; overload;
-
-    constructor Create(mainProcedureFull: TPromiseFull; _then: TResolve; _catch: TReject); reintroduce; overload;
-    constructor Create(mainProcedureFull: TPromiseFull); reintroduce; overload;
-  end;
-
-  TAwaitPromiseAll = class
+  TAwaitPromiseAll = class  //TODO REVIEW
   public
     _exit: boolean;
     result: string;
-    constructor Create(procedures: TArrayOfObjectProcedures); reintroduce; overload;
+    constructor Create(methods: TArrayOfMethods); reintroduce; overload;
   end;
 
   TPromiseAll = class
   private
-    objectProcedures: TArrayOfObjectProcedures;
-    procedures: TArrayOfProcedures;
-
-    proceduresAreObject: boolean;
-
+    methods: TArrayOfMethods;
+    anonymousMethods: TArrayOfAnonymousMethods;
+    thenCallback: TCallBack;
+    catchCallback: TCallback;
+    typeOfProcedure: TTypeOfProcedure;
     numberProcedures: integer;
     countProceduresDone: integer;
-    thenProcedure: TResolve;
-    catchProcedure: TReject;
-
-    status: string;
     _exit: boolean;
+    constructor Create(_then: TCallBack; _catch: TCallback); reintroduce; overload;
     procedure executeProcedures;
-    procedure createPromise(_procedure: TProcedureOfObject); overload;
-    procedure createPromise(_procedure: TProcedure); overload;
-
+    procedure createPromise(_method: TMethod); overload;
+    procedure createPromise(_anonymousMethod: TAnonymousMethod); overload;
     procedure incCountProceduresDone;
   public
-    //
-    //    procedure _then(value: TResolve);
-    //    procedure _catch(value: TReject);
-    constructor Create(procedures: TArrayOfObjectProcedures; _then: TResolve; _catch: TReject); reintroduce; overload;
-    constructor Create(procedures: TArrayOfProcedures; _then: TResolve; _catch: TReject); reintroduce; overload;
-    constructor Create(_then: TResolve; _catch: TReject); reintroduce; overload;
+    status: string;
+    constructor Create(methods: TArrayOfMethods; callBacks: TCallbacks); reintroduce; overload;
+    constructor Create(methods: TArrayOfMethods; _then: TCallBack; _catch: TCallback); reintroduce; overload;
+    constructor Create(anonymousMethods: TArrayOfAnonymousMethods; callBacks: TCallbacks); reintroduce; overload;
+    constructor Create(anonymousMethods: TArrayOfAnonymousMethods; _then: TCallBack; _catch: TCallback); reintroduce; overload;
   end;
 
-  EExitPromise = class(EAbort);
+  TExecutorFunction = reference to procedure(resolve: TCallBack; reject: TCallback);
 
-function awaitPromiseAll(procedures: TArrayOfObjectProcedures): string;
+  TPromise = class
+  private
+    executorFunction: TExecutorFunction;
+    thenCallback: TCallBack;
+    catchCallback: TCallback;
+    alreadyExecuted: boolean;
+    enabledThenCallback: boolean;
+    enabledCatchCallback: boolean;
+    procedure execute;
+    procedure executeInAnonymousThread;
+    procedure resolve(msg: string);
+    procedure reject(msg: string);
+  public
+    constructor Create(executorFunction: TExecutorFunction; _then: TCallBack; _catch: TCallback); reintroduce; overload;
+    constructor Create(executorFunction: TExecutorFunction); reintroduce; overload;
+    procedure _then(value: TCallBack);
+    procedure _catch(value: TCallback);
+  end;
+
+function awaitPromiseAll(procedures: TArrayOfMethods): string;
 
 implementation
 
-function awaitPromiseAll(procedures: TArrayOfObjectProcedures): string; // REVIEW
+uses
+  VCL.Forms,
+  Winapi.ActiveX,
+  System.SysUtils, System.Classes;
+
+function awaitPromiseAll(procedures: TArrayOfMethods): string; //TODO REVIEW
 var
   _awaitPromiseAll: TAwaitPromiseAll;
   _result: string;
@@ -104,11 +83,11 @@ begin
   result := _result;
 end;
 
-constructor TAwaitPromiseAll.Create(procedures: TArrayOfObjectProcedures);
+constructor TAwaitPromiseAll.Create(methods: TArrayOfMethods);
 var
   _promiseAll: TPromiseAll;
 begin
-  _promiseAll := TPromiseAll.Create(procedures,
+  _promiseAll := TPromiseAll.Create(methods,
     procedure(value: String)
     begin
       result := value;
@@ -120,35 +99,42 @@ begin
     end);
 end;
 
-constructor TPromiseAll.Create(procedures: TArrayOfObjectProcedures; _then: TResolve; _catch: TReject);
+constructor TPromiseAll.Create(methods: TArrayOfMethods; callBacks: TCallbacks);
 begin
-  self.objectProcedures := procedures;
-  proceduresAreObject := true;
+  Create(methods, TCallBack(callBacks.resolve), TCallback(callBacks.reject));
+end;
+
+constructor TPromiseAll.Create(methods: TArrayOfMethods; _then: TCallBack; _catch: TCallback);
+begin
+  self.methods := methods;
+  typeOfProcedure := TTypeOfProcedure._method;
   Create(_then, _catch);
 end;
 
-constructor TPromiseAll.Create(procedures: TArrayOfProcedures; _then: TResolve; _catch: TReject);
+constructor TPromiseAll.Create(anonymousMethods: TArrayOfAnonymousMethods; callBacks: TCallbacks);
 begin
-  self.procedures := procedures;
-  proceduresAreObject := false;
+  Create(anonymousMethods, TCallBack(callBacks.resolve), TCallback(callBacks.reject));
+end;
+
+constructor TPromiseAll.Create(anonymousMethods: TArrayOfAnonymousMethods; _then: TCallBack; _catch: TCallback);
+begin
+  self.anonymousMethods := anonymousMethods;
+  typeOfProcedure := TTypeOfProcedure._anonymousMethod;
   Create(_then, _catch);
 end;
 
-constructor TPromiseAll.Create(_then: TResolve; _catch: TReject);
+constructor TPromiseAll.Create(_then: TCallBack; _catch: TCallback);
 begin
-  if proceduresAreObject then
-  begin
-    self.numberProcedures := Length(objectProcedures);
-  end
-  else
-  begin
-    self.numberProcedures := Length(procedures);
+  case typeOfProcedure of
+    TTypeOfProcedure._method:
+      self.numberProcedures := Length(methods);
+    TTypeOfProcedure._anonymousMethod:
+      self.numberProcedures := Length(anonymousMethods);
   end;
   self.countProceduresDone := 0;
-
-  //  status := 'created';
-  thenProcedure := _then;
-  catchProcedure := _catch;
+  status := 'created';
+  thenCallback := _then;
+  catchCallback := _catch;
   executeProcedures;
 end;
 
@@ -156,33 +142,30 @@ procedure TPromiseAll.executeProcedures;
 var
   i: integer;
 begin
-  //  status := 'pending';
+  status := 'pending';
   _exit := false;
   i := 0;
-
   for i := 0 to numberProcedures - 1 do
   begin
-    if proceduresAreObject then
-    begin
-      createPromise(self.objectProcedures[i]);
-    end
-    else
-    begin
-      createPromise(self.procedures[i]);
+    case typeOfProcedure of
+      TTypeOfProcedure._method:
+        createPromise(self.methods[i]);
+      TTypeOfProcedure._anonymousMethod:
+        createPromise(self.anonymousMethods[i]);
     end;
   end;
 end;
 
-procedure TPromiseAll.createPromise(_procedure: TProcedureOfObject);
+procedure TPromiseAll.createPromise(_method: TMethod);
 var
   _promise: TPromise;
 begin
   _promise := TPromise.Create(
-    procedure(resolve: TResolve; reject: TResolve)
+    procedure(resolve: TCallBack; reject: TCallback)
     begin
       if not _exit then
       begin
-        _procedure;
+        _method;
         resolve('');
       end;
     end,
@@ -192,25 +175,25 @@ begin
     end,
     procedure(value: String)
     begin
-      //      status := 'reject';
+      status := 'reject';
       if not _exit then
       begin
-        catchProcedure(value);
+        catchCallback(value);
         _exit := true;
       end;
     end);
 end;
 
-procedure TPromiseAll.createPromise(_procedure: TProcedure);
+procedure TPromiseAll.createPromise(_anonymousMethod: TAnonymousMethod);
 var
   _promise: TPromise;
 begin
   _promise := TPromise.Create(
-    procedure(resolve: TResolve; reject: TResolve)
+    procedure(resolve: TCallBack; reject: TCallback)
     begin
       if not _exit then
       begin
-        _procedure;
+        _anonymousMethod;
         resolve('');
       end;
     end,
@@ -220,10 +203,10 @@ begin
     end,
     procedure(value: String)
     begin
-      //      status := 'reject';
+      status := 'reject';
       if not _exit then
       begin
-        catchProcedure(value);
+        catchCallback(value);
         _exit := true;
       end;
     end);
@@ -234,51 +217,46 @@ begin
   inc(countProceduresDone);
   if (countProceduresDone = numberProcedures) then
   begin
-    //    status := 'resolve';
-    thenProcedure('');
+    status := 'resolve';
+    thenCallback('');
   end;
 end;
 
-constructor TPromise.Create(mainProcedureOnlyResolve: TPromiseResolve);
-begin
-  self._mainProcedureOnlyResolve := mainProcedureOnlyResolve;
-  enabledCatch := true;
-end;
+type
+  EExitPromise = class(EAbort);
 
-constructor TPromise.Create(mainProcedureOnlyReject: TPromiseReject);
+constructor TPromise.Create(executorFunction: TExecutorFunction; _then: TCallBack; _catch: TCallback);
 begin
-  self._mainProcedureOnlyReject := mainProcedureOnlyReject;
-  enabledThen := true;
-end;
-
-constructor TPromise.Create(mainProcedureFull: TPromiseFull; _then: TResolve; _catch: TReject);
-begin
-  Create(mainProcedureFull);
+  Create(executorFunction);
   self._then(_then);
   self._catch(_catch);
 end;
 
-constructor TPromise.Create(mainProcedureFull: TPromiseFull);
+constructor TPromise.Create(executorFunction: TExecutorFunction);
 begin
-  self._mainProcedureFull := mainProcedureFull;
+  self.executorFunction := executorFunction;
 end;
 
-procedure TPromise._then(value: TResolve);
+procedure TPromise._then(value: TCallBack);
+var
+  enabledExecute: boolean;
 begin
-  enabledThen := true;
-  thenProcedure := value;
-  enabledExecute := enabledThen and enabledCatch;
+  enabledThenCallback := true;
+  thenCallback := value;
+  enabledExecute := enabledThenCallback and enabledCatchCallback;
   if enabledExecute then
   begin
     execute;
   end;
 end;
 
-procedure TPromise._catch(value: TReject);
+procedure TPromise._catch(value: TCallback);
+var
+  enabledExecute: boolean;
 begin
-  enabledCatch := true;
-  catchProcedure := value;
-  enabledExecute := enabledThen and enabledCatch;
+  enabledCatchCallback := true;
+  catchCallback := value;
+  enabledExecute := enabledThenCallback and enabledCatchCallback;
   if enabledExecute then
   begin
     execute;
@@ -301,7 +279,7 @@ begin
     begin
       CoInitialize(nil);
       try
-        mainProcedure;
+        executorFunction(resolve, reject);
       except
         on e: Exception do
         begin
@@ -316,31 +294,15 @@ begin
     end).Start;
 end;
 
-procedure TPromise.mainProcedure;
-begin
-  if Assigned(_mainProcedureFull) then
-  begin
-    _mainProcedureFull(resolve, reject);
-  end
-  else if Assigned(_mainProcedureOnlyResolve) then
-  begin
-    _mainProcedureOnlyResolve(resolve);
-  end
-  else if Assigned(_mainProcedureOnlyReject) then
-  begin
-    _mainProcedureOnlyReject(reject);
-  end;
-end;
-
 procedure TPromise.resolve(msg: string);
 begin
-  thenProcedure(msg);
+  thenCallback(msg);
   raise EExitPromise.Create('force exit in resolve procedure');
 end;
 
 procedure TPromise.reject(msg: string);
 begin
-  catchProcedure(msg);
+  catchCallback(msg);
   raise EExitPromise.Create('force exit in reject procedure');
 end;
 
